@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snip · URL Shortener</title>
+  <style>
+    :root { --bg:#0b1020; --card:#131a2e; --line:#243052; --text:#e7ecf7; --muted:#8e9ab8; --accent:#6c8cff; --ok:#3ccf91; --err:#ff6b6b; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: radial-gradient(1200px 600px at 20% -10%, #1d2a5a 0%, var(--bg) 60%); color: var(--text); min-height: 100vh; }
+    main { max-width: 860px; margin: 0 auto; padding: 48px 16px; }
+    h1 { font-size: 40px; margin: 0 0 6px; letter-spacing: -0.02em; }
+    h1 span { color: var(--accent); }
+    .sub { color: var(--muted); margin: 0 0 28px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+    form { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .row { display: grid; grid-template-columns: 1fr 160px; gap: 12px; }
+    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+    input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: #0d1326; color: var(--text); font-size: 15px; }
+    input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    button { cursor: pointer; border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 600; font-size: 15px; background: var(--accent); color: #fff; }
+    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); padding: 6px 10px; font-size: 13px; font-weight: 500; }
+    button.danger { color: var(--err); }
+    #result { margin-top: 14px; display: none; padding: 14px; border-radius: 10px; background: #0d1326; border: 1px solid var(--line); }
+    #result.ok { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    #result.error { display: block; color: var(--err); }
+    #result a { color: var(--ok); font-weight: 600; font-size: 18px; word-break: break-all; }
+    h2 { font-size: 18px; margin: 36px 0 12px; display: flex; justify-content: space-between; align-items: baseline; }
+    h2 small { color: var(--muted); font-weight: 400; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: middle; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    td a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .target { color: var(--muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clicks { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .tag { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #3a1d2a; color: var(--err); margin-left: 6px; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .empty { color: var(--muted); text-align: center; padding: 28px; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+    footer a { color: var(--accent); }
+    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } .target, .hide-sm { display: none; } h1 { font-size: 32px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Snip<span>.</span></h1>
+  <p class="sub">Shorten long links, share them, and see how many times they were clicked.</p>
+
+  <div class="card">
+    <form id="form">
+      <div>
+        <label for="url">Long URL</label>
+        <input id="url" type="url" placeholder="https://example.com/a/very/long/link" required>
+      </div>
+      <div class="row">
+        <div>
+          <label for="alias">Custom alias (optional)</label>
+          <input id="alias" placeholder="my-link" pattern="[A-Za-z0-9_-]{3,16}" title="3-16 letters, digits, - or _">
+        </div>
+        <div>
+          <label for="days">Expires in days</label>
+          <input id="days" type="number" min="1" max="365" placeholder="never">
+        </div>
+      </div>
+      <button type="submit">Shorten URL</button>
+    </form>
+    <div id="result"></div>
+  </div>
+
+  <h2>Your links <small id="count"></small></h2>
+  <div class="card" style="padding: 4px 10px;">
+    <table>
+      <thead><tr><th>Short link</th><th class="hide-sm">Destination</th><th>Clicks</th><th></th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer>Built with Java 21 &amp; Spring Boot · <a href="/swagger-ui.html">API docs</a></footer>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  async function load() {
+    const res = await fetch('/api/links');
+    const links = await res.json();
+    $('count').textContent = links.length ? links.length + ' total' : '';
+    $('rows').innerHTML = links.length ? links.map((l) => `
+      <tr>
+        <td><a href="${esc(l.shortUrl)}" target="_blank" rel="noopener">/${esc(l.code)}</a>${l.expired ? '<span class="tag">expired</span>' : ''}</td>
+        <td class="target hide-sm" title="${esc(l.targetUrl)}">${esc(l.targetUrl)}</td>
+        <td class="clicks">${l.clicks}</td>
+        <td class="actions">
+          <button class="ghost" data-copy="${esc(l.shortUrl)}">Copy</button>
+          <button class="ghost danger" data-del="${esc(l.code)}">Delete</button>
+        </td>
+      </tr>`).join('') : '<tr><td colspan="4" class="empty">No links yet. Shorten your first one above.</td></tr>';
+  }
+
+  $('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { url: $('url').value, alias: $('alias').value || null, expiresInDays: $('days').value ? Number($('days').value) : null };
+    const res = await fetch('/api/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    const box = $('result');
+    if (res.ok) {
+      box.className = 'ok';
+      box.innerHTML = `<a href="${esc(data.shortUrl)}" target="_blank" rel="noopener">${esc(data.shortUrl)}</a><button class="ghost" data-copy="${esc(data.shortUrl)}">Copy</button>`;
+      e.target.reset();
+      load();
+    } else {
+      box.className = 'error';
+      const fields = data.fieldErrors ? ': ' + Object.entries(data.fieldErrors).map(([k, v]) => k + ' ' + v).join(', ') : '';
+      box.textContent = data.message + fields;
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    const copy = e.target.dataset.copy;
+    const del = e.target.dataset.del;
+    if (copy) {
+      await navigator.clipboard.writeText(copy);
+      e.target.textContent = 'Copied!';
+      setTimeout(() => (e.target.textContent = 'Copy'), 1200);
+    }
+    if (del && confirm('Delete /' + del + '?')) {
+      await fetch('/api/links/' + encodeURIComponent(del), { method: 'DELETE' });
+      load();
+    }
+  });
+
+  load();
+  setInterval(load, 5000);
+</script>
+</body>
+</html>
